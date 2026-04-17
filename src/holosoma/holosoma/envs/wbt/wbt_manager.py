@@ -42,6 +42,10 @@ class WholeBodyTrackingManager(BaseTask):
     def _pre_compute_observations_callback(self):
         self.base_quat[:] = self.simulator.base_quat[:]
 
+    def _post_compute_observations_callback(self):
+        if self.is_evaluating:
+            self._draw_debug_vis()
+
     def _reset_buffers_callback(self, env_ids, target_buf=None):
         self.need_to_refresh_envs[env_ids] = True
         self.episode_length_buf[env_ids] = 0
@@ -134,6 +138,8 @@ class WholeBodyTrackingManager(BaseTask):
 
     def _draw_debug_vis_isaacsim(self):
         motion_command = self.command_manager.get_state("motion_command")
+        if not hasattr(motion_command, "visualization_markers"):
+            return
         # torso link
         real_robot_pos_xyz = motion_command.robot_ref_pos_w.clone()
         real_robot_quat_xyzw = motion_command.robot_ref_quat_w.clone()

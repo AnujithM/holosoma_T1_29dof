@@ -38,7 +38,7 @@ class CommandRegistry:
             glfw.KEY_L: ("height_down", lambda: self._adjust_command(8, -0.1)),
             glfw.KEY_I: ("waist_yaw_up", lambda: self._adjust_command(5, 0.1)),
             glfw.KEY_K: ("waist_yaw_down", lambda: self._adjust_command(5, -0.1)),
-            glfw.KEY_P: ("push_robots", lambda: logger.warning("Push Robots not implemented, ignoring...")),
+            glfw.KEY_P: ("push_robots", lambda: self.simulator.request_push()),
         }
 
         # Gantry commands (using new enum-based system with parameters)

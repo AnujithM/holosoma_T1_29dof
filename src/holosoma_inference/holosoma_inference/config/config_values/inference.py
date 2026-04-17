@@ -65,11 +65,134 @@ g1_29dof_wbt = InferenceConfig(
     secondary=_g1_safety_secondary,
 )
 
+# T1 Whole-Body Tracking (23DOF)
+t1_23dof_wbt = InferenceConfig(
+    robot=replace(
+        robot.t1_23dof,
+        stiff_startup_pos=(
+            0.0,
+            0.0,  # head (yaw, pitch)
+            0.2,
+            -1.35,
+            0.0,
+            -0.5,  # left arm
+            0.2,
+            1.35,
+            0.0,
+            0.5,  # right arm
+            0.0,  # waist
+            -0.2,
+            0.0,
+            0.0,
+            0.4,
+            -0.25,
+            0.0,  # left leg
+            -0.2,
+            0.0,
+            0.0,
+            0.4,
+            -0.25,
+            0.0,  # right leg
+        ),
+        stiff_startup_kp=(
+            20,
+            20,  # head
+            20,
+            20,
+            20,
+            20,  # left arm
+            20,
+            20,
+            20,
+            20,  # right arm
+            200,  # waist
+            200,
+            200,
+            200,
+            200,
+            50,
+            50,  # left leg
+            200,
+            200,
+            200,
+            200,
+            50,
+            50,  # right leg
+        ),
+        stiff_startup_kd=(
+            0.2,
+            0.2,  # head
+            0.5,
+            0.5,
+            0.5,
+            0.5,  # left arm
+            0.5,
+            0.5,
+            0.5,
+            0.5,  # right arm
+            5,  # waist
+            5,
+            5,
+            5,
+            5,
+            3,
+            3,  # left leg
+            5,
+            5,
+            5,
+            5,
+            3,
+            3,  # right leg
+        ),
+    ),
+    observation=observation.wbt_23dof,
+    task=task.wbt,
+)
+
+# T1 Whole-Body Tracking (29DOF)
+# fmt: off
+_t1_29dof_wbt_robot = replace(
+    robot.t1_29dof,
+    stiff_startup_pos=(
+        0.0, 0.0,                                          # head (yaw, pitch)
+        0.2, -1.35, 0.0, -0.5, 0.0, 0.0, 0.0,             # left arm (7 DOF)
+        0.2, 1.35, 0.0, 0.5, 0.0, 0.0, 0.0,               # right arm (7 DOF)
+        0.0,                                                # waist
+        -0.2, 0.0, 0.0, 0.4, -0.25, 0.0,                   # left leg
+        -0.2, 0.0, 0.0, 0.4, -0.25, 0.0,                   # right leg
+    ),
+    stiff_startup_kp=(
+        20, 20,                                             # head
+        20, 20, 20, 20, 20, 20, 20,                         # left arm
+        20, 20, 20, 20, 20, 20, 20,                         # right arm
+        200,                                                # waist
+        200, 200, 200, 200, 50, 50,                          # left leg
+        200, 200, 200, 200, 50, 50,                          # right leg
+    ),
+    stiff_startup_kd=(
+        0.2, 0.2,                                           # head
+        0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,                 # left arm
+        0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,                 # right arm
+        5,                                                  # waist
+        5, 5, 5, 5, 3, 3,                                    # left leg
+        5, 5, 5, 5, 3, 3,                                    # right leg
+    ),
+)
+# fmt: on
+
+t1_29dof_wbt = InferenceConfig(
+    robot=_t1_29dof_wbt_robot,
+    observation=observation.wbt,
+    task=task.wbt,
+)
+
 # Core defaults - no extension imports at module load time
 DEFAULTS = {
     "g1-29dof-loco": g1_29dof_loco,
     "t1-29dof-loco": t1_29dof_loco,
     "g1-29dof-wbt": g1_29dof_wbt,
+    "t1-23dof-wbt": t1_23dof_wbt,
+    "t1-29dof-wbt": t1_29dof_wbt,
 }
 
 # Track whether extensions have been loaded

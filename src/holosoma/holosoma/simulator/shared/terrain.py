@@ -210,14 +210,19 @@ class Terrain(TerrainInterface):
         progressive difficulty based on row position.
         """
         proportions = np.array(self._terrain_proportions) / np.sum(self._terrain_proportions)
+        progressive_rows = bool(getattr(self._cfg, "row_progressive_difficulty", False))
         for k in range(self._num_sub_terrains):
             print(f"generating randomized terrains {k} / {self._num_sub_terrains}     ", end="\r")
             # Env coordinates in the world
             (i, j) = np.unravel_index(k, (self._num_rows, self._num_cols))
 
             terrain_type = np.random.choice(self._terrain_types, p=proportions)
-            difficulty = np.random.choice([0.5, 0.75, 0.9])
-            if terrain_type in {"smooth_slope", "rough_slope", "slope"}:
+            if progressive_rows:
+                denom = max(1, self._num_rows - 1)
+                difficulty = 0.2 + 0.7 * (i / denom)
+            else:
+                difficulty = np.random.choice([0.5, 0.75, 0.9])
+            if not progressive_rows and terrain_type in {"smooth_slope", "rough_slope", "slope"}:
                 difficulty = i / self._num_rows
             terrain = self.make_terrain(terrain_type, difficulty)
             self.add_terrain_to_map(terrain, int(i), int(j))

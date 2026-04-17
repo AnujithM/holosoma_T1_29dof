@@ -196,6 +196,13 @@ class TerrainTermCfg:
     slope_treshold: float = 0.75
     """Slope threshold for trimesh correction to vertical surfaces."""
 
+    row_progressive_difficulty: bool = False
+    """If True, terrain difficulty increases monotonically from low to high rows.
+
+    This keeps lower rows easier and upper rows harder, enabling row-based
+    terrain curricula at spawn time.
+    """
+
     obj_file_path: str = ""
     """Path to OBJ file for custom terrain mesh."""
 

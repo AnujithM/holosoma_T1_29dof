@@ -90,6 +90,13 @@ class PhysxConfig:
     bounce_threshold_velocity: float = 0.5
     """Velocity threshold below which bounce responses are suppressed."""
 
+    default_buffer_size_multiplier: float = 12.0
+    """PhysX GPU buffer multiplier for contact/patch buffers.
+
+    Increase if IsaacGym reports narrowphase/broadphase buffer overflows
+    (e.g., PxgNarrowphaseCore or PxgAABBManager warnings).
+    """
+
 
 @dataclass(frozen=True)
 class MujocoXMLFilterCfg:

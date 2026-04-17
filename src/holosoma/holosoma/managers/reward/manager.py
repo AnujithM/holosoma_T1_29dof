@@ -167,8 +167,14 @@ class RewardManager:
                     f"Expected [{self.env.num_envs}], got {rew_raw.shape}"
                 )
 
+            # Keep rewards numerically well-behaved to avoid poisoning replay buffers.
+            rew_raw = torch.nan_to_num(rew_raw, nan=0.0, posinf=1e4, neginf=-1e4)
+            rew_raw = torch.clamp(rew_raw, -1e4, 1e4)
+
             # Scale by weight and dt
             rew_scaled = rew_raw * term_cfg.weight * dt
+            rew_scaled = torch.nan_to_num(rew_scaled, nan=0.0, posinf=1e3, neginf=-1e3)
+            rew_scaled = torch.clamp(rew_scaled, -1e3, 1e3)
 
             # Accumulate
             self._reward_buf += rew_scaled
@@ -180,6 +186,9 @@ class RewardManager:
         # Optionally clip to positive
         if self.cfg.only_positive_rewards:
             self._reward_buf[:] = torch.clip(self._reward_buf, min=0.0)
+
+        self._reward_buf[:] = torch.nan_to_num(self._reward_buf, nan=0.0, posinf=1e3, neginf=-1e3)
+        self._reward_buf[:] = torch.clamp(self._reward_buf, -1e3, 1e3)
 
         return self._reward_buf
 

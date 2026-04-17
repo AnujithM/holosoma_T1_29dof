@@ -103,6 +103,17 @@ class MotionConfig:
     use_adaptive_timesteps_sampler: bool = False
     """During training, whether to prioritize training on motion segments where the robot fails often."""
 
+    use_adaptive_motion_sampler: bool = False
+    """During training with multiple motions, adaptively prioritize harder motions.
+    Tracks per-motion completion rate and focuses sampling on motions that are
+    difficult. Only effective when motion_dir has >1 motions."""
+
+    adaptive_motion_ema_alpha: float = 0.1
+    """EMA smoothing factor for per-motion completion rate tracking. Lower = slower update."""
+
+    adaptive_motion_uniform_ratio: float = 0.2
+    """Fraction of motion samples drawn uniformly for exploration (vs difficulty-weighted)."""
+
     start_at_timestep_zero_prob: float = 0.0
     """Probability of starting at timestep zero."""
 

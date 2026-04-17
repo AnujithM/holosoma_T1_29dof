@@ -140,6 +140,10 @@ class PushRandomizerState(RandomizationTermBase):
         self._max_push_vel_tensor = torch.empty(0, dtype=torch.float32, device=env.device)
         self._set_max_push_tensor(vector_max)
         self.enabled: bool = bool(params.get("enabled", True))
+        self.push_pulse_enabled: bool = bool(params.get("push_pulse_enabled", False))
+        pulse_duration = params.get("push_pulse_duration_s", [0.10, 0.20])
+        self.push_pulse_duration_s: Sequence[float] = [float(pulse_duration[0]), float(pulse_duration[1])]
+        self.push_fall_window_s: float = float(params.get("push_fall_window_s", 0.75))
         logger.info(
             f"[Randomization] PushRandomizerState initialized (enabled={self.enabled}, \
                 max_push_vel={self._max_push_vel_tensor.tolist()}, \
@@ -161,6 +165,9 @@ class PushRandomizerState(RandomizationTermBase):
 
         all_ids = torch.arange(num_envs, device=device, dtype=torch.long)
         self._resample_intervals(all_ids)
+        env._push_pulse_enabled = self.push_pulse_enabled
+        env._push_pulse_duration_s = (float(self.push_pulse_duration_s[0]), float(self.push_pulse_duration_s[1]))
+        env._push_recent_window_steps = max(1, int(self.push_fall_window_s / max(float(env.dt), 1e-6)))
 
     def reset(self, env_ids: torch.Tensor | None) -> None:
         if self.push_robot_counter is None or self.push_robot_plot_counter is None:
@@ -189,6 +196,9 @@ class PushRandomizerState(RandomizationTermBase):
         enabled: bool | None = None,
         push_interval_s: Sequence[float] | None = None,
         max_push_vel: Sequence[float] | None = None,
+        push_pulse_enabled: bool | None = None,
+        push_pulse_duration_s: Sequence[float] | None = None,
+        push_fall_window_s: float | None = None,
     ) -> None:
         if enabled is not None:
             self.enabled = bool(enabled)
@@ -196,6 +206,12 @@ class PushRandomizerState(RandomizationTermBase):
             self.push_interval_range = [float(push_interval_s[0]), float(push_interval_s[1])]
         if max_push_vel is not None:
             self._set_max_push_tensor(max_push_vel)
+        if push_pulse_enabled is not None:
+            self.push_pulse_enabled = bool(push_pulse_enabled)
+        if push_pulse_duration_s is not None:
+            self.push_pulse_duration_s = [float(push_pulse_duration_s[0]), float(push_pulse_duration_s[1])]
+        if push_fall_window_s is not None:
+            self.push_fall_window_s = float(push_fall_window_s)
 
     def resample(self, env_ids: torch.Tensor | None = None) -> None:
         idx = self._ensure_indices(env_ids)
@@ -1154,6 +1170,9 @@ def apply_pushes(
     enabled: bool | None = None,
     push_interval_s: Sequence[float] | None = None,
     max_push_vel: Sequence[float] | None = None,
+    push_pulse_enabled: bool | None = None,
+    push_pulse_duration_s: Sequence[float] | None = None,
+    push_fall_window_s: float | None = None,
     **_,
 ) -> None:
     """Apply random pushes based on the current schedule."""
@@ -1161,8 +1180,18 @@ def apply_pushes(
     if state is None:
         raise AttributeError("PushRandomizerState is not registered with the randomization manager.")
 
-    state.configure(enabled=enabled, push_interval_s=push_interval_s, max_push_vel=max_push_vel)
+    state.configure(
+        enabled=enabled,
+        push_interval_s=push_interval_s,
+        max_push_vel=max_push_vel,
+        push_pulse_enabled=push_pulse_enabled,
+        push_pulse_duration_s=push_pulse_duration_s,
+        push_fall_window_s=push_fall_window_s,
+    )
     env._push_robots_enabled = state.enabled
+    env._push_pulse_enabled = state.push_pulse_enabled
+    env._push_pulse_duration_s = (float(state.push_pulse_duration_s[0]), float(state.push_pulse_duration_s[1]))
+    env._push_recent_window_steps = max(1, int(state.push_fall_window_s / max(float(env.dt), 1e-6)))
 
     if env.is_evaluating or not state.enabled:
         return

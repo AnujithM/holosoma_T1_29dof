@@ -33,8 +33,12 @@ class LocomotionPolicy(BasePolicy):
     def get_current_obs_buffer_dict(self, robot_state_data):
         current_obs_buffer_dict = super().get_current_obs_buffer_dict(robot_state_data)
         current_obs_buffer_dict["actions"] = self.last_policy_action
-        current_obs_buffer_dict["command_lin_vel"] = self.lin_vel_command
-        current_obs_buffer_dict["command_ang_vel"] = self.ang_vel_command
+        current_obs_buffer_dict["command_lin_vel"] = (
+            self.lin_vel_command_gov if hasattr(self, "lin_vel_command_gov") else self.lin_vel_command
+        )
+        current_obs_buffer_dict["command_ang_vel"] = (
+            self.ang_vel_command_gov if hasattr(self, "ang_vel_command_gov") else self.ang_vel_command
+        )
         current_obs_buffer_dict["command_stand"] = self.stand_command
 
         # Add phase observations only if they are configured
@@ -57,7 +61,9 @@ class LocomotionPolicy(BasePolicy):
         """Update phase time."""
         phase_tp1 = self.phase + self.phase_dt
         self.phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
-        if np.linalg.norm(self.lin_vel_command[0]) < 0.01 and np.linalg.norm(self.ang_vel_command[0]) < 0.01:
+        lin_cmd = self.lin_vel_command_gov if hasattr(self, "lin_vel_command_gov") else self.lin_vel_command
+        ang_cmd = self.ang_vel_command_gov if hasattr(self, "ang_vel_command_gov") else self.ang_vel_command
+        if np.linalg.norm(lin_cmd[0]) < 0.01 and np.linalg.norm(ang_cmd[0]) < 0.01:
             # Robot should stand still - set both feet to same phase
             self.phase[0, :] = np.pi * np.ones(2)
             self.is_standing = True

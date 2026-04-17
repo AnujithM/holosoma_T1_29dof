@@ -34,6 +34,7 @@ from holosoma_retargeting.src.utils import (  # type: ignore[import-not-found]  
     calculate_scale_factor,
     create_new_scene_xml_file,
     create_scaled_multi_boxes_xml,
+    ensure_object_scene_xml,
     extract_foot_sticking_sequence_velocity,
     load_intermimic_data,
     preprocess_motion_data,
@@ -124,7 +125,7 @@ class RetargetingEvaluator:
         elif self.object_name == "multi_boxes":
             robot_xml_path = constants.SCENE_XML_FILE  # type: ignore[attr-defined]
         else:
-            robot_xml_path = robot_model_path.replace(".urdf", "_w_" + self.object_name + ".xml")
+            robot_xml_path = ensure_object_scene_xml(robot_model_path, self.object_name)
 
         self.robot_model = mujoco.MjModel.from_xml_path(robot_xml_path)
         print("Loading robot model from: ", robot_xml_path)

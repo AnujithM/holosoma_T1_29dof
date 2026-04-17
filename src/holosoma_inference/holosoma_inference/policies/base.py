@@ -266,6 +266,14 @@ class BasePolicy:
         self.stand_command = np.array([[0]])
         self.base_height_command = np.array([[self.desired_base_height]])
 
+        # Stability governor output commands (used for obs + phase timing)
+        self.lin_vel_command_gov = self.lin_vel_command.copy()
+        self.ang_vel_command_gov = self.ang_vel_command.copy()
+        self._command_scale = 1.0
+        self._command_scale_target = 1.0
+        self._governor_unstable = False
+        self._governor_stable_time = 0.0
+
         # These are used by derived classes, so keep them
         self.waist_dofs_command = np.zeros((1, 3))
         self.phase_time = np.zeros((1, 1))
@@ -674,8 +682,8 @@ class BasePolicy:
                 else:
                     q_target = robot_state_data[:, 7 : 7 + self.num_dofs]
             else:
-                # Prepare for inference - any preprocessing before RL inference
-                pass
+                # Update command governor before policy observation build
+                self._update_command_governor(robot_state_data)
 
         # Stage 3: Inference
         if use_policy and not get_ready:
@@ -718,6 +726,55 @@ class BasePolicy:
         phase_time = cur_time % self.gait_period / self.gait_period
         self.phase_time[:, 0] = phase_time
         return self.phase_time
+
+    def _update_command_governor(self, robot_state_data):
+        """Scale velocity commands down during instability and ramp up after recovery."""
+        if not getattr(self.config.task, "governor_enabled", False):
+            self.lin_vel_command_gov = self.lin_vel_command.copy()
+            self.ang_vel_command_gov = self.ang_vel_command.copy()
+            self._command_scale = 1.0
+            self._command_scale_target = 1.0
+            self._governor_unstable = False
+            self._governor_stable_time = 0.0
+            return
+
+        base_quat = robot_state_data[:, 3:7]
+        base_ang_vel = robot_state_data[:, 7 + self.num_dofs + 3 : 7 + self.num_dofs + 6]
+        projected_gravity = quat_rotate_inverse(base_quat, np.array([[0, 0, -1]]))
+        tilt = float(np.linalg.norm(projected_gravity[:, :2], axis=1).reshape(-1)[0])
+        ang_vel_xy = float(np.linalg.norm(base_ang_vel[:, :2], axis=1).reshape(-1)[0])
+
+        unstable_now = (tilt > self.config.task.governor_tilt_enter) or (
+            ang_vel_xy > self.config.task.governor_ang_vel_enter
+        )
+        stable_now = (tilt < self.config.task.governor_tilt_exit) and (
+            ang_vel_xy < self.config.task.governor_ang_vel_exit
+        )
+
+        if unstable_now:
+            self._governor_unstable = True
+            self._governor_stable_time = 0.0
+            self._command_scale_target = 0.0
+        else:
+            if stable_now:
+                self._governor_stable_time += 1.0 / max(self.rl_rate, 1e-6)
+                if self._governor_stable_time >= self.config.task.governor_hold_s:
+                    self._governor_unstable = False
+                    self._command_scale_target = 1.0
+                else:
+                    self._command_scale_target = 0.0
+            else:
+                self._command_scale_target = 0.0 if self._governor_unstable else 1.0
+
+        max_delta = self.config.task.governor_ramp_rate / max(self.rl_rate, 1e-6)
+        if self._command_scale < self._command_scale_target:
+            self._command_scale = min(self._command_scale + max_delta, self._command_scale_target)
+        else:
+            self._command_scale = max(self._command_scale - max_delta, self._command_scale_target)
+
+        self._command_scale = float(np.clip(self._command_scale, 0.0, 1.0))
+        self.lin_vel_command_gov = self.lin_vel_command * self._command_scale
+        self.ang_vel_command_gov = self.ang_vel_command * self._command_scale
 
     def update_phase_time(self):
         """Update phase time."""

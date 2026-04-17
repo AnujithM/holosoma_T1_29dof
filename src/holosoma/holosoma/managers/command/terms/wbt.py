@@ -51,10 +51,17 @@ class MotionLoader:
         self.time_step_total = self._joint_pos.shape[0]
 
     def _get_index_of_a_in_b(self, a_names: List[str], b_names: List[str], device: str = "cpu") -> torch.Tensor:
+        # Build reverse alias map so we can fall back to the original name when an
+        # alias target (e.g. G1's left_ankle_roll_link) doesn't exist in the data.
+        reverse_alias = {v: k for k, v in FAKE_BODY_NAME_ALIASES.items()}
         indexes = []
         for name in a_names:
-            assert name in b_names, f"The specified name ({name}) doesn't exist: {b_names}"
-            indexes.append(b_names.index(name))
+            if name in b_names:
+                indexes.append(b_names.index(name))
+            elif name in reverse_alias and reverse_alias[name] in b_names:
+                indexes.append(b_names.index(reverse_alias[name]))
+            else:
+                raise AssertionError(f"The specified name ({name}) doesn't exist: {b_names}")
         return torch.tensor(indexes, dtype=torch.long, device=device)
 
     # Expected holosoma NPZ keys
@@ -405,6 +412,109 @@ class MultiMotionLoader:
         return self
 
 
+class AdaptiveMotionSampler:
+    """Per-motion adaptive sampling inspired by HoloMotion/ProtoMotions.
+
+    Tracks per-motion completion rate via EMA and uses (1 - completion_rate) as the
+    difficulty signal for weighted sampling.  Includes a configurable uniform ratio
+    to ensure all motions get sampled occasionally for exploration.
+
+    Harder motions (lower completion rate) are sampled more frequently.
+    Unseen motions receive a neutral difficulty of 0.5 to encourage exploration.
+    """
+
+    def __init__(
+        self,
+        num_motions: int,
+        device: str,
+        ema_alpha: float = 0.1,
+        uniform_ratio: float = 0.2,
+    ):
+        assert 0.0 <= ema_alpha <= 1.0, f"ema_alpha must be in [0, 1], got {ema_alpha}"
+        assert 0.0 <= uniform_ratio <= 1.0, f"uniform_ratio must be in [0, 1], got {uniform_ratio}"
+        self.num_motions = num_motions
+        self.device = device
+        self.ema_alpha = ema_alpha
+        self.uniform_ratio = uniform_ratio
+        self.init_buffers()
+        self.metrics: dict[str, torch.Tensor] = {}
+
+    def init_buffers(self):
+        self.ema_completion_rate = torch.zeros(self.num_motions, dtype=torch.float32, device=self.device)
+        self.seen = torch.zeros(self.num_motions, dtype=torch.bool, device=self.device)
+        self.visit_count = torch.zeros(self.num_motions, dtype=torch.long, device=self.device)
+
+    def update(self, motion_ids: torch.Tensor, completion_rates: torch.Tensor) -> None:
+        """Update EMA completion rate for the given motions.
+
+        Args:
+            motion_ids: [N] motion indices that just completed/terminated.
+            completion_rates: [N] float in [0, 1], fraction of clip completed.
+        """
+        if motion_ids.numel() == 0:
+            return
+        # Aggregate by motion_id (multiple envs may track the same motion)
+        unique_ids, inverse = torch.unique(motion_ids, return_inverse=True)
+        cr_sum = torch.zeros(unique_ids.numel(), dtype=torch.float32, device=self.device)
+        cr_count = torch.zeros(unique_ids.numel(), dtype=torch.float32, device=self.device)
+        cr_sum.scatter_add_(0, inverse, completion_rates.float())
+        cr_count.scatter_add_(0, inverse, torch.ones_like(completion_rates, dtype=torch.float32))
+        mean_cr = (cr_sum / cr_count.clamp(min=1.0)).clamp(0.0, 1.0)
+
+        prev_seen = self.seen[unique_ids]
+        prev_cr = self.ema_completion_rate[unique_ids]
+        alpha = self.ema_alpha
+        new_cr = torch.where(prev_seen, (1.0 - alpha) * prev_cr + alpha * mean_cr, mean_cr)
+
+        self.ema_completion_rate[unique_ids] = new_cr
+        self.seen[unique_ids] = True
+        self.visit_count[unique_ids] += cr_count.round().long()
+
+    @property
+    def sampling_weights(self) -> torch.Tensor:
+        """Compute per-motion sampling weights."""
+        uniform = torch.full(
+            (self.num_motions,), 1.0 / self.num_motions, dtype=torch.float32, device=self.device
+        )
+        # Difficulty weight: harder motions (low completion) get higher weight
+        difficulty = (1.0 - self.ema_completion_rate).clamp(min=0.0, max=1.0)
+        # Unseen motions get neutral difficulty (0.5) to encourage exploration
+        difficulty = torch.where(self.seen, difficulty, torch.full_like(difficulty, 0.5))
+        diff_sum = difficulty.sum().clamp(min=1e-12)
+        difficulty_norm = difficulty / diff_sum
+        # Blend difficulty-weighted with uniform exploration
+        weights = (1.0 - self.uniform_ratio) * difficulty_norm + self.uniform_ratio * uniform
+        return weights
+
+    def sample(self, n: int) -> torch.Tensor:
+        """Sample n motion IDs according to adaptive weights."""
+        return torch.multinomial(self.sampling_weights, n, replacement=True)
+
+    def get_stats(self) -> None:
+        """Compute metrics for logging."""
+        weights = self.sampling_weights
+        H = -(weights * (weights + 1e-12).log()).sum()
+        H_max = float(np.log(max(self.num_motions, 2)))
+
+        seen_mask = self.seen
+        if seen_mask.any():
+            cr = self.ema_completion_rate[seen_mask]
+            mean_cr = cr.mean()
+            min_cr = cr.min()
+        else:
+            mean_cr = torch.tensor(0.0, device=self.device)
+            min_cr = torch.tensor(0.0, device=self.device)
+
+        w_max, i_max = weights.max(dim=0)
+
+        self.metrics["motion_sampler/entropy"] = H / H_max
+        self.metrics["motion_sampler/top1_weight"] = w_max
+        self.metrics["motion_sampler/top1_motion_id"] = i_max.float()
+        self.metrics["motion_sampler/mean_completion_rate"] = mean_cr
+        self.metrics["motion_sampler/min_completion_rate"] = min_cr
+        self.metrics["motion_sampler/num_seen"] = seen_mask.float().sum()
+
+
 class AdaptiveTimestepsSampler:
     """Prioritizes training on motion segments where the robot fails most often."""
 
@@ -496,9 +606,12 @@ class AdaptiveTimestepsSampler:
 ## Helper functions
 #########################################################################################################
 FAKE_BODY_NAME_ALIASES: dict[str, str] = {
-    # Fake foot contact bodies are authored in the URDF purely for height computation.
-    # They do not exist in the motion-capture dataset, so we alias them back to the
-    # closest real body when indexing into motion data. These are not actually used in training.
+    # G1 robot: Fake foot contact bodies are authored in the URDF purely for height
+    # computation. They do not exist in the motion-capture dataset, so we alias them
+    # back to the closest real body when indexing into motion data.
+    # NOTE: Only applied when the body name exists in the alias map AND the alias
+    # target exists in the motion data. For T1 robots, left_foot_contact_point is a
+    # real body in both the URDF and the motion data, so no aliasing is needed.
     "left_foot_contact_point": "left_ankle_roll_link",
     "right_foot_contact_point": "right_ankle_roll_link",
 }
@@ -582,6 +695,16 @@ class MotionCommand(CommandTermBase):
                 self.motion.time_step_total, self.device, int(1 / (self._env.dt))
             )
 
+        # 4b. get the adaptive motion sampler (per-motion difficulty-weighted sampling)
+        if self.motion_cfg.use_adaptive_motion_sampler and self.motion.num_motions > 1:
+            self.adaptive_motion_sampler = AdaptiveMotionSampler(
+                num_motions=self.motion.num_motions,
+                device=self.device,
+                ema_alpha=self.motion_cfg.adaptive_motion_ema_alpha,
+                uniform_ratio=self.motion_cfg.adaptive_motion_uniform_ratio,
+            )
+            self._adaptive_motion_update_ready = False
+
         # 5. metrics
         self.metrics: dict[str, torch.Tensor] = {}
 
@@ -612,10 +735,27 @@ class MotionCommand(CommandTermBase):
         if self._env.is_evaluating:
             phase = torch.zeros_like(phase)
 
-        # For multi-motion: randomly assign each env to a motion, sample within that motion's range
+        # For multi-motion: assign each env to a motion
         n = env_ids.numel()
         num_motions = self.motion.num_motions
-        self.motion_ids[env_ids] = torch.randint(0, num_motions, (n,), device=self.device)
+
+        # Record completion rates before reassigning (adaptive motion sampling)
+        if hasattr(self, "adaptive_motion_sampler") and not self._env.is_evaluating:
+            if self._adaptive_motion_update_ready:
+                old_motion_ids = self.motion_ids[env_ids]
+                old_start = self.motion.motion_start_idx[old_motion_ids]
+                old_end = self.motion.motion_end_idx[old_motion_ids]
+                old_len = (old_end - old_start).float().clamp(min=1.0)
+                completed = (self.time_steps[env_ids] - old_start).float() / old_len
+                completed = completed.clamp(0.0, 1.0)
+                self.adaptive_motion_sampler.update(old_motion_ids, completed)
+            self._adaptive_motion_update_ready = True
+
+        # Sample motion IDs (adaptive or uniform)
+        if hasattr(self, "adaptive_motion_sampler") and not self._env.is_evaluating:
+            self.motion_ids[env_ids] = self.adaptive_motion_sampler.sample(n)
+        else:
+            self.motion_ids[env_ids] = torch.randint(0, num_motions, (n,), device=self.device)
         start_idx = self.motion.motion_start_idx[self.motion_ids[env_ids]]
         end_idx = self.motion.motion_end_idx[self.motion_ids[env_ids]]
         motion_len = end_idx - start_idx
@@ -997,6 +1137,10 @@ class MotionCommand(CommandTermBase):
         if self.motion_cfg.use_adaptive_timesteps_sampler:
             self.adaptive_timesteps_sampler.init_buffers()
 
+        if hasattr(self, "adaptive_motion_sampler"):
+            self.adaptive_motion_sampler.init_buffers()
+            self._adaptive_motion_update_ready = False
+
     def update_metrics(self):
         """Update the metrics. After action, before step() is called."""
         self.metrics["motion/error_ref_pos"] = torch.norm(self.ref_pos_w - self.robot_ref_pos_w, dim=-1)
@@ -1033,6 +1177,11 @@ class MotionCommand(CommandTermBase):
             self.metrics["motion/adaptive_timesteps_sampler_top1_bin"] = self.adaptive_timesteps_sampler.metrics[
                 "sampling_top1_bin"
             ]
+
+        if hasattr(self, "adaptive_motion_sampler"):
+            self.adaptive_motion_sampler.get_stats()
+            for k, v in self.adaptive_motion_sampler.metrics.items():
+                self.metrics[k] = v
 
     #########################################################################################
     ## Internal helpers
@@ -1397,8 +1546,8 @@ class MotionCommand(CommandTermBase):
             visualization_markers_cfg = RAY_CASTER_MARKER_CFG.replace(
                 prim_path=f"/Visuals/Command/motion_robot_body/motion_{body_names}",
             )
-            visualization_markers_cfg.markers["hit"].radius = 0.03
-            visualization_markers_cfg.markers["hit"].visual_material.diffuse_color = (0.0, 1.0, 0.0)
+            visualization_markers_cfg.markers["hit"].radius = 0.06
+            visualization_markers_cfg.markers["hit"].visual_material.diffuse_color = (1.0, 0.0, 0.0)
             self.visualization_markers[f"motion_{body_names}"] = VisualizationMarkers(visualization_markers_cfg)
 
         if self.motion.has_object:

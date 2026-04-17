@@ -44,6 +44,38 @@ def calculate_scale_factor(task_name, robot_height):
     return robot_height / human_height
 
 
+def ensure_object_scene_xml(robot_urdf_file: str, object_name: str) -> str:
+    """Ensure an object-specific MuJoCo scene XML exists.
+
+    The repository ships a largebox scene template for each robot. For other OMOMO
+    objects, generate a sibling XML by swapping the object mesh path and names.
+    """
+    robot_urdf_path = Path(robot_urdf_file)
+    target_xml_path = robot_urdf_path.with_name(f"{robot_urdf_path.stem}_w_{object_name}.xml")
+    if target_xml_path.exists():
+        return str(target_xml_path)
+
+    template_xml_path = robot_urdf_path.with_name(f"{robot_urdf_path.stem}_w_largebox.xml")
+    if not template_xml_path.exists():
+        raise FileNotFoundError(
+            f"Missing scene XML template: {template_xml_path}. "
+            f"Cannot generate scene for object '{object_name}'."
+        )
+
+    with open(template_xml_path) as f:
+        content = f.read()
+
+    content = content.replace("largebox_mesh", f"{object_name}_mesh")
+    content = content.replace("../../largebox/largebox.obj", f"../../{object_name}/{object_name}.obj")
+    content = content.replace('body name="largebox_link"', f'body name="{object_name}_link"')
+    content = content.replace('geom name="largebox"', f'geom name="{object_name}"')
+
+    with open(target_xml_path, "w") as f:
+        f.write(content)
+
+    return str(target_xml_path)
+
+
 def load_object_data(
     object_file,
     smpl_scale=0.714,

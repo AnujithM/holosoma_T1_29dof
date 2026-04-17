@@ -103,6 +103,9 @@ class BaseTask:
         self.simulator: BaseSimulator = SimulatorClass(
             tyro_config=full_sim_config, terrain_manager=self.terrain_manager, device=device
         )
+        if hasattr(self, "_push_robots"):
+            # Allow simulator viewer hotkeys to invoke task-level push logic.
+            self.simulator.set_push_robots_callback(self._push_robots)
 
         self.headless = self.training_config.headless
         self.simulator.set_headless(self.headless)

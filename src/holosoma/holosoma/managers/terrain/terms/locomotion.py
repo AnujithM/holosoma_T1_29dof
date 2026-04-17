@@ -178,6 +178,7 @@ class TerrainLocomotion(TerrainTermBase):
         ray_directions_world = self._ray_directions[idx]
         ray_hits_world = warp_utils.ray_cast(ray_starts_world, ray_directions_world, self.warp_mesh)
         base_heights = (base_positions - ray_hits_world)[..., 2]
+        base_heights = torch.nan_to_num(base_heights, nan=0.0, posinf=2.0, neginf=-2.0)
         return interquartile_mean(base_heights, dim=1), ray_hits_world
 
     def _get_feet_heights(self, env_ids=None) -> Tuple[torch.Tensor, torch.Tensor]:

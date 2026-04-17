@@ -24,6 +24,13 @@ locomotion = TaskConfig(
     joystick_type="xbox",
     joystick_device=0,
     wandb_download_dir="/tmp",
+    governor_enabled=True,
+    governor_tilt_enter=0.35,
+    governor_tilt_exit=0.25,
+    governor_ang_vel_enter=1.2,
+    governor_ang_vel_exit=0.8,
+    governor_hold_s=0.5,
+    governor_ramp_rate=2.0,
 )
 
 # Whole-body tracking task
@@ -43,6 +50,7 @@ wbt = TaskConfig(
     joystick_type="xbox",
     joystick_device=0,
     wandb_download_dir="/tmp",
+    governor_enabled=False,
 )
 
 # Safety locomotion (FastSAC) — used as default secondary for dual-mode

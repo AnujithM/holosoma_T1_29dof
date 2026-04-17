@@ -40,6 +40,9 @@ class TerminationManager:
         self._term_instances: dict[str, TerminationTermBase] = {}
         self._term_names: list[str] = []
         self._term_cfgs: list[TerminationTermCfg] = []
+        self._last_term_results: dict[str, torch.Tensor] = {}
+        self._last_reset_flags = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+        self._last_timeout_flags = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
 
         # Expose non-timeout / timeout termination masks so that downstream
         # consumers (e.g. adaptive motion sampling in MotionCommand) can
@@ -89,6 +92,7 @@ class TerminationManager:
         """
         reset_flags = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
         timeout_flags = torch.zeros_like(reset_flags)
+        self._last_term_results = {}
 
         for term_name, term_cfg in zip(self._term_names, self._term_cfgs):
             if term_name in self._term_instances:
@@ -105,10 +109,17 @@ class TerminationManager:
                 timeout_flags |= result
             else:
                 reset_flags |= result
+            self._last_term_results[term_name] = result
 
         self.terminated = reset_flags.clone()
         self.time_outs = timeout_flags.clone()
+        self._last_reset_flags = reset_flags
+        self._last_timeout_flags = timeout_flags
         return reset_flags, timeout_flags
+
+    def get_last_term_result(self, term_name: str) -> torch.Tensor | None:
+        """Return the latest boolean mask for a termination term."""
+        return self._last_term_results.get(term_name, None)
 
     def reset(self, env_ids: torch.Tensor | None = None) -> None:
         """Reset stateful terms.

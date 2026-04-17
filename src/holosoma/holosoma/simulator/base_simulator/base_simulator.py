@@ -164,6 +164,10 @@ class BaseSimulator:
         # Bridge system
         self.bridge: SimulatorBridge | None = None
 
+        # Optional callback used by viewer hotkeys (e.g. IsaacGym "push robots").
+        # Environments can register task-specific logic via set_push_robots_callback().
+        self.push_robots_callback = None
+
         # To be overridden by subclasses
         self.height_samples = None
 
@@ -202,6 +206,16 @@ class BaseSimulator:
             callback: A callable to be invoked during environment startup.
         """
         # Default no-op implementation
+
+    def set_push_robots_callback(self, callback):
+        """Register callback for viewer-triggered robot pushes.
+
+        Parameters
+        ----------
+        callback : callable | None
+            Function taking `env_ids` tensor/list. If None, push hotkey is ignored.
+        """
+        self.push_robots_callback = callback
 
     def setup(self):
         """

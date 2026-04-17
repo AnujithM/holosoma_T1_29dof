@@ -115,6 +115,27 @@ class TaskConfig:
     debug: DebugConfig = DebugConfig()
     """Debug overrides for quick testing."""
 
+    governor_enabled: bool = False
+    """Enable command governor that scales commands down during instability."""
+
+    governor_tilt_enter: float = 0.35
+    """Enter active governor when tilt exceeds this threshold (radians)."""
+
+    governor_tilt_exit: float = 0.25
+    """Exit active governor when tilt falls below this threshold (radians)."""
+
+    governor_ang_vel_enter: float = 1.2
+    """Enter active governor when angular velocity XY norm exceeds this (rad/s)."""
+
+    governor_ang_vel_exit: float = 0.8
+    """Exit active governor when angular velocity XY norm falls below this (rad/s)."""
+
+    governor_hold_s: float = 0.5
+    """Required stable hold duration before resuming full commands."""
+
+    governor_ramp_rate: float = 2.0
+    """Command scale slew rate per second."""
+
     def __post_init__(self):
         """Resolve use_keyboard/use_joystick shortcuts into velocity_input/state_input."""
         if self.use_keyboard and self.use_joystick:

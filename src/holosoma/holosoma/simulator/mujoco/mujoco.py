@@ -7,6 +7,7 @@ implementations for terrain rendering, contact detection, and physics simulation
 from __future__ import annotations
 
 import dataclasses
+import time
 
 import mujoco
 import mujoco.viewer
@@ -138,6 +139,15 @@ class MuJoCo(BaseSimulator):
         self.dof_pos = torch.zeros(0, device=device)
         self.dof_vel = torch.zeros(0, device=device)
         self.contact_forces = torch.zeros(0, device=device)
+
+        # External push (manual disturbance) parameters
+        self._push_force_mag = 150.0
+        self._push_duration_s = 0.2
+        self._push_end_time = 0.0
+        self._push_force = np.zeros(3, dtype=np.float64)
+        self._push_body_name = getattr(self.robot_config, "torso_name", "torso_link")
+        self._push_body_id: int | None = None
+        self._push_active = False
 
         # Viewer
         self.viewer: mujoco.viewer.Handle | None = None
@@ -449,6 +459,25 @@ class MuJoCo(BaseSimulator):
         logger.info(f"Robot joint names (prefixed): {robot_joint_names}")
         logger.info(f"DOF names: {self.dof_names}")
         logger.info(f"Body names: {self.body_names}")
+
+        # Resolve body id for manual pushes (best-effort)
+        try:
+            self._push_body_id = self.find_rigid_body_indice(self._push_body_name)
+            logger.info(f"Push body: '{self._push_body_name}' -> id {self._push_body_id}")
+        except Exception as exc:
+            fallback_name = "pelvis" if "pelvis" in self.body_names else None
+            if fallback_name is not None:
+                try:
+                    self._push_body_id = self.find_rigid_body_indice(fallback_name)
+                    logger.warning(
+                        f"Push body '{self._push_body_name}' not found. "
+                        f"Falling back to '{fallback_name}' (id {self._push_body_id})."
+                    )
+                except Exception:
+                    self._push_body_id = None
+            else:
+                self._push_body_id = None
+            logger.warning(f"Push body lookup failed: {exc}")
 
     def _set_robot_joint_addressing(self) -> None:
         """Setup proper joint addressing using named freejoint and MuJoCo APIs.
@@ -896,6 +925,9 @@ class MuJoCo(BaseSimulator):
             # Apply virtual gantry forces before step
             self.virtual_gantry.step()
 
+        # Apply manual push if requested
+        self._apply_push_force()
+
         # Step bridge for updated torques before step using base class helper
         self._step_bridge()
 
@@ -905,6 +937,76 @@ class MuJoCo(BaseSimulator):
         # Call video recorder capture frame if recording is active
         if self.video_recorder and self.video_recorder.is_recording:
             self.capture_video_frame()
+
+    def request_push(
+        self,
+        *,
+        force: np.ndarray | None = None,
+        magnitude: float | None = None,
+        duration_s: float | None = None,
+    ) -> None:
+        """Request a short external push on the robot torso."""
+        if self._push_body_id is None:
+            logger.warning("Push requested but no valid push body found.")
+            return
+
+        if force is None:
+            mag = float(magnitude if magnitude is not None else self._push_force_mag)
+            angle = np.random.uniform(0.0, 2.0 * np.pi)
+            force = np.array([np.cos(angle) * mag, np.sin(angle) * mag, 0.0], dtype=np.float64)
+
+        self._push_force = np.asarray(force, dtype=np.float64).reshape(3)
+        dur = float(duration_s if duration_s is not None else self._push_duration_s)
+        self._push_end_time = time.perf_counter() + max(dur, 0.0)
+        self._push_active = True
+        logger.info(f"Push requested: force={self._push_force}, duration={dur:.2f}s")
+
+    def _apply_push_force(self) -> None:
+        """Apply pending push force to the selected body."""
+        if not self._push_active or self._push_body_id is None or self.applied_forces is None:
+            return
+
+        now = time.perf_counter()
+        gantry_enabled = bool(self.virtual_gantry and self.virtual_gantry.enabled)
+        if now > self._push_end_time:
+            self._push_active = False
+            if not gantry_enabled:
+                self._clear_push_force()
+            return
+
+        body_id = self._push_body_id
+        if isinstance(self.applied_forces, torch.Tensor):
+            force_tensor = torch.from_numpy(self._push_force).float().to(self.sim_device)
+            if self.applied_forces.ndim == 3:
+                env_id = self.current_world_id if self.num_envs > 1 else 0
+                if gantry_enabled:
+                    self.applied_forces[env_id, body_id, :3] += force_tensor
+                else:
+                    self.applied_forces[env_id, body_id, :3] = force_tensor
+            else:
+                if gantry_enabled:
+                    self.applied_forces[body_id, :3] += force_tensor
+                else:
+                    self.applied_forces[body_id, :3] = force_tensor
+        else:
+            if gantry_enabled:
+                self.applied_forces[body_id, :3] += self._push_force
+            else:
+                self.applied_forces[body_id, :3] = self._push_force
+
+    def _clear_push_force(self) -> None:
+        """Clear push force when gantry is disabled."""
+        if self._push_body_id is None or self.applied_forces is None:
+            return
+        body_id = self._push_body_id
+        if isinstance(self.applied_forces, torch.Tensor):
+            if self.applied_forces.ndim == 3:
+                env_id = self.current_world_id if self.num_envs > 1 else 0
+                self.applied_forces[env_id, body_id, :3] = 0.0
+            else:
+                self.applied_forces[body_id, :3] = 0.0
+        else:
+            self.applied_forces[body_id, :3] = 0.0
 
     def get_actor_states_by_index(self, indices: ActorIndices) -> ActorStates:
         """Get actor states using MuJoCo best practices with robot-only validation.

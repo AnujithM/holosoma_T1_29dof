@@ -30,6 +30,7 @@ from utils import (  # type: ignore[import-not-found,no-redef]  # noqa: E402
     calculate_laplacian_coordinates,
     calculate_laplacian_matrix,
     create_interaction_mesh,
+    ensure_object_scene_xml,
     get_adjacency_list,
     transform_points_local_to_world,
     transform_points_world_to_local,
@@ -120,7 +121,7 @@ class InteractionMeshRetargeter:
         elif self.object_name == "multi_boxes":
             robot_xml_path = self.task_constants.SCENE_XML_FILE
         else:
-            robot_xml_path = self.robot_model_path.replace(".urdf", "_w_" + self.object_name + ".xml")
+            robot_xml_path = ensure_object_scene_xml(self.robot_model_path, self.object_name)
 
         self.robot_model = mujoco.MjModel.from_xml_path(robot_xml_path)
         print("Loading robot model from: ", robot_xml_path)

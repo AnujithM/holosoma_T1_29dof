@@ -20,6 +20,7 @@ if str(src_root) not in sys.path:
 from holosoma_retargeting.config_types.data_conversion import DataConversionConfig  # noqa: E402
 from holosoma_retargeting.config_types.data_type import MotionDataConfig  # noqa: E402
 from holosoma_retargeting.config_types.robot import RobotConfig  # noqa: E402
+from holosoma_retargeting.src.utils import ensure_object_scene_xml  # noqa: E402
 
 DynamicState = Tuple[
     torch.Tensor,
@@ -407,7 +408,7 @@ def run_simulator(args_cli: DataConversionConfig):
     else:
         if object_name is None:
             raise ValueError("object_name cannot be None when it's not 'ground' or 'multi_boxes'")
-        robot_xml_path = robot_model_path.replace(".urdf", "_w_" + object_name + ".xml")
+        robot_xml_path = ensure_object_scene_xml(robot_model_path, object_name)
 
     robot = mujoco.MjModel.from_xml_path(robot_xml_path)
     robot_data = mujoco.MjData(robot)

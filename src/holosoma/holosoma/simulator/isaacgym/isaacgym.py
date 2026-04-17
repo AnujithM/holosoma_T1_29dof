@@ -171,6 +171,15 @@ class IsaacGym(BaseSimulator):
         sim_params.physx.use_gpu = True
         sim_params.physx.num_subscenes = 0
         sim_params.physx.max_gpu_contact_pairs = self.robot_config.contact_pairs_multiplier * 1024 * 1024
+        if hasattr(sim_params.physx, "default_buffer_size_multiplier"):
+            sim_params.physx.default_buffer_size_multiplier = (
+                self.simulator_config.sim.physx.default_buffer_size_multiplier
+            )
+            logger.info(
+                f"PhysX default_buffer_size_multiplier={sim_params.physx.default_buffer_size_multiplier}"
+            )
+        else:
+            logger.warning("PhysX default_buffer_size_multiplier is not available in this IsaacGym build.")
         sim_params.use_gpu_pipeline = True
 
         gymutil.parse_sim_config(dataclasses.asdict(self.simulator_config.sim), sim_params)
@@ -837,7 +846,11 @@ class IsaacGym(BaseSimulator):
                 logger.info(f"Camera tracking: {status}")
             elif evt.action == "push_robots" and evt.value > 0:
                 logger.info("Push Robots")
-                self._push_robots(torch.arange(self.num_envs, device=self.device))
+                env_ids = torch.arange(self.num_envs, device=self.device)
+                if self.push_robots_callback is None:
+                    logger.warning("Push Robots hotkey ignored: no push callback registered by environment.")
+                else:
+                    self.push_robots_callback(env_ids)
             # elif evt.action == "next_task" and evt.value > 0:
             #     self.next_task()
             elif evt.action == "walk_stand_toggle" and evt.value > 0:
