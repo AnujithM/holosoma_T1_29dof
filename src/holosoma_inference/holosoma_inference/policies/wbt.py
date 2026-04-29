@@ -368,8 +368,10 @@ class WholeBodyTrackingPolicy(BasePolicy):
             else:
                 self.curr_motion_timestep += 1
 
-            if self.curr_motion_timestep != prev:
-                self.logger.info(f"Motion timestep: {prev} → {self.curr_motion_timestep}")  # noqa: G004
+            if self.curr_motion_timestep != prev and (
+                self.curr_motion_timestep < 10 or self.curr_motion_timestep % 250 == 0
+            ):
+                self.logger.info(f"Motion timestep: {prev} -> {self.curr_motion_timestep}")  # noqa: G004
 
             # Stop motion clip at configured end timestep (keep policy running at final pose)
             if (end := self.config.task.motion_end_timestep) and self.curr_motion_timestep >= end:
