@@ -285,6 +285,7 @@ class BasePolicy:
         self.cmd_q = np.zeros(self.num_dofs)
         self.cmd_dq = np.zeros(self.num_dofs)
         self.cmd_tau = np.zeros(self.num_dofs)
+        self._missing_state_warn_count = 0
 
     def _init_phase_components(self):
         """Initialize phase components."""
@@ -666,6 +667,15 @@ class BasePolicy:
         # Stage 1: Read State
         with self.latency_tracker.measure("read_state"):
             robot_state_data = self.interface.get_low_state()
+
+        if robot_state_data is None:
+            self._missing_state_warn_count += 1
+            warn_interval = max(1, int(self.rl_rate * 2))
+            if self._missing_state_warn_count == 1 or self._missing_state_warn_count % warn_interval == 0:
+                self.logger.warning("Waiting for robot state from bridge; start MuJoCo sim first or check interface.")
+            return
+
+        self._missing_state_warn_count = 0
 
         # Stage 2: Pre-processing
         with self.latency_tracker.measure("preprocessing"):

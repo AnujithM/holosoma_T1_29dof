@@ -28,6 +28,8 @@ src/holosoma/holosoma/data/robots/converted_rank*/
 # other
 *.egg-info
 __pycache__
+motions_t1_29dof_npz/
+logs/WholeBodyTracking/*-eval/
 
 # Gas Town (added by gt)
 .runtime/
